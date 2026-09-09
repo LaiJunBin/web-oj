@@ -1,0 +1,6 @@
+[submodule "frontend/openapi-zod-client"]
+	path = frontend/openapi-zod-client
+	url = https://github.com/LaiJunBin/openapi-zod-client
+[submodule "frontend/msw-auto-mock"]
+	path = frontend/msw-auto-mock
+	url = https://github.com/LaiJunBin/msw-auto-mock

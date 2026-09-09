@@ -1,0 +1,5 @@
+.pnpm-store/*
+
+# Local configs carry real keys; keep them untracked even when copied to the root
+/config.yaml
+/config_test.yaml

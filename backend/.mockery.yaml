@@ -1,0 +1,6 @@
+with-expecter: True
+all: True
+dir: "internal/mocks/{{.PackagePath}}"
+packages:
+  github.com/docker/docker/client:
+  github.com/spf13/afero:

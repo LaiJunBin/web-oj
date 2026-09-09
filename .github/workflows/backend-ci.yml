@@ -1,0 +1,124 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "!backend/**/*.md"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "!backend/**/*.md"
+      - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
+
+# A superseded run for the same ref has no value once a newer commit exists.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: CI only needs to read the repo. Without this the default
+# GITHUB_TOKEN carries broad write scopes an action could abuse.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  unit:
+    name: Build, vet and unit tests (race + MongoDB integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # The MongoDB-backed repository tests in
+      # internal/app/judge_domain/judge/infrastructure/repository skip
+      # themselves when no Docker daemon is reachable, so that developers
+      # without Docker can still run ./internal/... . This variable turns that
+      # skip into a hard failure, which is the whole point of running them
+      # here: the conditional-update guarantees they cover (single-executor
+      # ownership in TryStart, and terminal saves never reporting success for
+      # a write they did not make) are exactly the kind that silently rot if
+      # the only tests proving them are allowed to not run.
+      REQUIRE_MONGO_TESTS: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Download modules
+        run: go mod download
+
+      # api/api.gen.go is untracked; the generator is version-pinned inside
+      # the make target, so this step needs nothing but Go.
+      - name: Generate API server code
+        run: make api
+
+      # Build compiles no _test.go files, so it can (and does) run before the
+      # mocks exist — an honest signal that production code never depends on
+      # generated mocks.
+      - name: Build
+        run: go build ./...
+
+      # Generated mocks are gitignored (never committed), so a fresh checkout
+      # cannot compile the test files until they are regenerated. Pin the
+      # exact mockery version the repo was generated with — a floating
+      # @latest would silently change generated code between CI runs.
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@v2.45.0
+
+      - name: Generate mocks
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          make mocks
+
+      # Vet and the tests below compile _test.go files, so both must run
+      # AFTER mock generation.
+      - name: Vet
+        run: go vet ./...
+
+      # ubuntu-latest ships a running Docker daemon, which testcontainers uses
+      # to start the MongoDB container. Fail loudly here rather than let the
+      # integration tests report a confusing container-startup error.
+      - name: Verify Docker is available for testcontainers
+        run: docker info
+
+      # No config setup needed: unit suites read the TRACKED fixture
+      # internal/config/config/config_test.yaml via NewTestConfig(), so a
+      # fresh checkout is self-sufficient. (The gitignored root
+      # backend/config_test.yaml belongs to the feature suites' runner —
+      # NewFeatureConfig() — which runs in the e2e workflow, not here.)
+      # ./internal/... deliberately, not ./... : the BDD suites under tests/
+      # need MySQL/Redis/Mongo containers wired up by the feature-test
+      # runner, so they are a separate concern from this job.
+      - name: Unit and integration tests
+        run: go test -race -count=1 -timeout 25m ./internal/...
+
+  security:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the secret scan can inspect past commits, not just
+          # the current tree.
+          fetch-depth: 0
+
+      # Scans the whole working tree AND git history for committed secrets, and
+      # fails the job if any are found. Pinned binary rather than a marketplace
+      # action so it needs no license or extra token scopes.
+      - name: Secret scan (gitleaks)
+        working-directory: ${{ github.workspace }}
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --redact --exit-code 1

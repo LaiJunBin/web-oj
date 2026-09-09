@@ -1,0 +1,98 @@
+version: 2
+# Must live at the repository root's .github/ to be read by GitHub — a
+# dependabot.yml under backend/.github/ is silently ignored.
+#
+# Every ecosystem groups ALL its version bumps into a single PR: without
+# groups, Dependabot's first scan of a fresh repository opens up to the PR
+# limit per ecosystem at once, and each PR triggers the CI workflows — dozens
+# of runs on day one. Security updates are not affected by grouping and still
+# arrive as individual PRs.
+updates:
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: weekly
+    # Version PRs are OFF (limit 0), not the ecosystem: security alerts and
+    # security-update PRs still arrive. The module set is deliberately frozen
+    # until the recorded toolchain batch — redistore is pinned against an old
+    # redigo and the docker SDK against an old go-connections, so ANY grouped
+    # minor bump drags in an incompatible pair and the PR can only ever fail
+    # (observed twice). Re-raise this limit in the same change that unfreezes
+    # the toolchain.
+    open-pull-requests-limit: 0
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    ignore:
+      # Majors are where breaking API changes live (the docker SDK bump broke
+      # ImageLoad's signature, redistore's needed a newer redigo) — take them
+      # deliberately, not from a weekly bot PR. NOTE: ignore rules also apply
+      # to security updates; an advisory fixable only by a major bump then
+      # shows up as an alert in the Security tab without a PR.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-dependencies:
+        patterns: ["*"]
+    ignore:
+      # Same policy as gomod: majors carry the breaking changes (and the
+      # generated zod client is sensitive to its generator's major), so they
+      # are taken deliberately. The security-update caveat above applies.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: /typespec
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-dependencies:
+        patterns: ["*"]
+    ignore:
+      # The TypeSpec packages version as a lockstep 0.x family: a "minor"
+      # bump of one member (rest 0.85) peer-requires a different compiler
+      # line and ERESOLVEs against the others, so no partial bump can ever
+      # install. They are upgraded together, deliberately, with the three
+      # openapi.yaml snapshots re-diffed afterwards — the recorded toolchain
+      # batch — so Dependabot must not propose them at all. Security
+      # advisories still surface as alerts.
+      - dependency-name: "@typespec/*"
+      # Same major policy as everywhere else, for anything non-TypeSpec that
+      # ever lands here.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+    groups:
+      docker-dependencies:
+        patterns: ["*"]
+    ignore:
+      # A base-image major is a toolchain upgrade (golang 1.23 → 1.27 bumps
+      # the Go release two years and breaks old x/tools-class dependencies);
+      # policy is to take those deliberately, in the recorded housekeeping
+      # batch, not from a weekly bot PR.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-dependencies:
+        patterns: ["*"]
+    ignore:
+      # Same policy as every other ecosystem: majors change action inputs and
+      # runner expectations, so they are taken deliberately.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

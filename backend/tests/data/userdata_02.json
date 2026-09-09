@@ -1,0 +1,27 @@
+[
+  {
+    "name": "",
+    "username": "user06",
+    "password": "1234",
+    "roles": [
+      "admin"
+    ]
+  },
+  {
+    "name": "選手07",
+    "username": "user07",
+    "password": "",
+    "roles": [
+      "contestant"
+    ]
+  },
+  {
+    "name": "選手08",
+    "username": "user08",
+    "password": "1234",
+    "roles": [
+      "contestant",
+      "api_reader"
+    ]
+  }
+]

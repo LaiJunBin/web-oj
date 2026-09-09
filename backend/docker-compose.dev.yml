@@ -1,0 +1,17 @@
+# Development overlay: hot reload on the live source tree.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Switches the app to the dev image stage (air + tooling) and mounts the
+# repository over it, so edits rebuild and restart the backend automatically.
+# That is exactly why this overlay must NEVER run at a venue: air turns any
+# touch of the mounted tree (a stray git pull is enough) into the mid-contest
+# restart the checklist warns against. The dev container stacks this file by
+# default (see .devcontainer/devcontainer.json).
+services:
+  app:
+    build:
+      target: go_app_dev
+    volumes:
+      - ..:/app
+    working_dir: /app/backend

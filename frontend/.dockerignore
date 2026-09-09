@@ -1,0 +1,11 @@
+node_modules
+.svelte-kit
+build
+coverage
+playwright-report
+test-results
+.pnpm-store
+.git
+.gitignore
+.DS_Store
+dist

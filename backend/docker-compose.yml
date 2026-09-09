@@ -1,0 +1,113 @@
+# The single-host deployment compose: quick start and a contest venue run THIS
+# file as-is — the default is the compiled deployment image, and the dev→venue
+# differences are pure configuration (see backend/README.md's checklist).
+# Hot-reload development opts in via docker-compose.dev.yml; NEVER bring that
+# overlay to a venue (its header says why).
+#
+# It mounts the host docker socket into the API container so the judge can
+# spawn containers — that socket is root-equivalent on the host, so the API
+# container must NEVER be exposed directly to an untrusted network. Published
+# ports below are bound to 127.0.0.1 so nothing here is reachable off-host by
+# default; for anything beyond a trusted single host (long-lived operation, an
+# untrusted network) put the API behind a reverse proxy (TLS) and run the
+# judge on a dedicated host (docker mode: remote + mTLS) rather than mounting
+# docker.sock beside an internet-facing API.
+services:
+  app:
+    container_name: backend-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: go_app_prod
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # What the dev overlay's source mount used to provide implicitly: the
+      # operator's config, and the submission storage that must outlive
+      # container recreation.
+      - ./config.yaml:/app/config.yaml:ro
+      - ./storage:/app/storage
+    networks:
+      - go-app-network
+    environment:
+      - DOCKER_API_VERSION=1.44
+    ports:
+      # The API is meant to be reached by contestants' browsers directly (CORS +
+      # credentials) and by the frontend dev server, often from another machine —
+      # unlike the DB/admin ports below (and the monitor overlay's), binding it to loopback only
+      # makes it unreachable. Default stays loopback for safety; set
+      # API_BIND_HOST=0.0.0.0 to expose it to the room's LAN — and make sure that
+      # machine is NOT on the public internet (it mounts the docker socket).
+      - "${API_BIND_HOST:-127.0.0.1}:8080:8080"
+    restart: unless-stopped
+    labels:
+      - "monitoring.group=judge-backend"
+  mysql:
+    container_name: backend-mysql
+    # 與 feature test（testcontainers）同版本，schema 相容性已被測試持續驗證
+    image: mysql:8.0.26
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - go-app-network
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: judge_db
+      TZ: Asia/Taipei
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    labels:
+      - "monitoring.group=judge-backend"
+  redis:
+      container_name: backend-redis
+      image: redis:alpine
+      networks:
+        - go-app-network
+      restart: unless-stopped
+      labels:
+        - "monitoring.group=judge-backend"
+  mongo:
+    container_name: backend-mongo
+    image: mongo:4.4.18
+    networks:
+      - go-app-network
+    ports:
+      - "127.0.0.1:27017:27017"
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    volumes:
+      - mongo-data:/data/db
+    labels:
+      - "monitoring.group=judge-backend"
+  mongo-express:
+    image: mongo-express
+    restart: always
+    networks:
+      - go-app-network
+    ports:
+      - 127.0.0.1:${MONGO_EXPRESS_PORT:-8082}:8081
+    depends_on:
+      - mongo
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${DATABASE_MONGO_USERNAME:-root}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${DATABASE_MONGO_PASSWORD:-example}
+      ME_CONFIG_BASICAUTH_USERNAME: ${DATABASE_MONGO_USERNAME:-root}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${DATABASE_MONGO_PASSWORD:-example}
+      ME_CONFIG_MONGODB_URL: mongodb://root:example@mongo/?enableUtf8Validation=false
+    labels:
+      - "monitoring.group=judge-backend"
+
+networks:
+  go-app-network:
+    driver: bridge
+    name: go-app-network
+
+volumes:
+  mysql-data:
+  mongo-data:

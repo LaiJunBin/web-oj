@@ -1,0 +1,21 @@
+# pnpm 10+ 讀這裡的設定(package.json 的 pnpm 欄位已不再生效)。
+# 允許執行 build script 的相依:esbuild(平台二進位)、msw(同步 static/ 的 worker script)。
+allowBuilds:
+  esbuild: true
+  msw: true
+
+# @sveltejs/kit 仍釘 cookie ^0.6(GHSA-pxg6-pf52-xh8x,low);0.7 API 相容,
+# 待上游升版後可移除此 override。
+#
+# fast-uri 是 openapi-zod-client(產生器 submodule)經 swagger-parser → ajv 帶進來的
+# **建置期**傳遞相依,只在 `pnpm gen:api-client` 時跑,不進 runtime bundle。四條 high
+# 都是 SSRF/host confusion(GHSA-5jgf-p345-68v8、f65p-4m7j-42xc、fph4-wmhf-6fwf、
+# jqff-g426-hqxp),3.1.6 起修好。釘 ^3.1.6 而非 >=3.1.6:修掉漏洞就好,不要讓未來
+# 的 major 悄悄進到產生器的建置路徑。待 ajv 自己升上 >=3.1.6 後可移除此 override。
+# js-yaml 由 eslint 工具鏈(@eslint/eslintrc)傳遞帶入,只在 lint 時跑、不進 runtime bundle。
+# GHSA-2883-xcg3-v3hh(high):maxTotalMergeKeys 對空 merge 來源不設限,可被 CPU 耗盡。
+# 4.3.2 起修好,4.x API 相容。待 @eslint/eslintrc 自己升上 >=4.3.2 後可移除此 override。
+overrides:
+  cookie: ^0.7.2
+  fast-uri: ^3.1.6
+  js-yaml: ^4.3.2

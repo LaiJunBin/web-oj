@@ -1,0 +1,195 @@
+# development | release | production
+# 注意：env=production 會強制 cookie.secure=true（見下），瀏覽器因此只在 HTTPS 下
+# 才收送 auth 與 CSRF cookie。若你的部署是「考場區網、純 HTTP、無 TLS」，請用
+# release 而非 production——否則登入會靜默失敗、CSRF 對不上，且唯一線索只有一行 log。
+# production 一定要搭配 TLS（反向代理終結 HTTPS 亦可）。
+env: development
+
+server:
+  port: 8080
+  appKey: !<tag:yaml.org,2002:str> ""
+  jwtKey: !<tag:yaml.org,2002:str> ""
+  storeKey: !<tag:yaml.org,2002:str> ""
+  csrfKey: !<tag:yaml.org,2002:str> ""
+  rdbDriver: sqlite
+  storagePath: ./storage
+  # Upload and extraction limits. Omitting a key applies the default shown;
+  # a NEGATIVE value disables that limit.
+  maxUploadSizeMB: 100    # cap on a single request body (default 100)
+  maxUnzipSizeMB: 1024    # cap on what one archive may extract to (default 1024)
+  maxUnzipEntries: 50000  # cap on entries per archive (default 50000)
+  # 匯出檔匯入（/bundles/import、/images/import）自己的上傳上限（MB，預設 2048）。
+  # archive 模式的映像匯出檔帶的是 docker save 的輸出，數百 MB 是常態；不動上面的
+  # maxUploadSizeMB，是因為那會同時放寬每一個上傳端點，而其他端點沒這個需要。
+  # 注意：這只是「上傳 body」上限。匯出檔解壓進記憶體時另受 maxUnzipSizeMB（解壓後
+  # 總大小）與 maxUnzipEntries 約束——若預期會匯入大型映像匯出檔，請把 maxUnzipSizeMB
+  # 一併調到 >= 此值，否則會「先收下再以過大拒絕」。
+  bundleImportMaxUploadSizeMB: 2048
+  # metricsHost：Prometheus 指標伺服器（:9091）綁定的介面。預設 127.0.0.1，
+  # 使 /metrics 與（非 production 時的）pprof 預設不對外網開放。若要讓另一台
+  # 主機／容器抓取指標（見 docker-compose.monitor.yml），設成 0.0.0.0。
+  metricsHost: 127.0.0.1
+  # trustedProxies：可信任的反向代理 IP/CIDR 白名單。**留空 = 不信任任何 proxy**，
+  # 登入頻率限制以真實 TCP 來源(RemoteAddr)計數，攻擊者無法靠偽造 X-Forwarded-For
+  # 每次換 IP 來繞過。只有當 API 真的架在反向代理後面時，才填該 proxy 的位址，讓
+  # 系統還原出真正的 client IP（否則所有請求看起來都來自 proxy 那一個 IP）。
+  trustedProxies: []
+  # 登入頻率限制。**只有「失敗（401）」會扣額度**，成功登入完全不消耗——所以一間
+  # 教室同時登入不會互相把對方鎖在門外；且長期的「失敗猜測速率」精確等於 perMinute，
+  # 與並行度無關（採 reserve-and-refund，在途請求各占一枚 token）。
+  # 以 (client IP, 帳號) 為桶：burst=可連續失敗次數（給手誤餘裕），之後每分鐘補
+  # perMinute 次。預設刻意調嚴（30 / 6 ≈ 每 10 秒一次，四位數 PIN 約 28 小時），
+  # 因為只扣失敗，調嚴幾乎不影響正常使用者。三態同其他上限：不寫＝預設；明確 0 或負
+  # ＝停用（burst 或 perMinute 任一非正即停用）；> 0 ＝該值。
+  loginRateLimitBurst: 30
+  loginRateLimitPerMinute: 6
+  # 逐 IP 的 backstop：擋「單一來源亂灌不同帳號」（逐帳號桶擋不到，因為每個新帳號
+  # 都是新桶）。它由整個 IP 後面的人共用，所以 burst 要能吸收「開賽瞬間一整間教室的
+  # 手誤」——請照你最大單一來源的人數估（預設 300）；長期速率壓低才擋得住 spray
+  # （預設 60/分）。非正＝停用此 backstop。
+  loginRateLimitIpBurst: 300
+  loginRateLimitIpPerMinute: 60
+  # 直接豁免的網段（考場區網可放這裡）。這是給營運的明確出口，不該是唯一防線。
+  loginRateLimitExemptCIDRs: []
+  allowedOrigins:
+    - http://localhost:5173
+auth:
+  # These are now actually read. They were unread for a long time while the
+  # lifetimes were hardcoded to an hour and a week; omitting a key applies
+  # those same values as the default.
+  accessTokenTTLSeconds: 3600
+  refreshTokenTTLSeconds: 604800
+  cookie:
+    domain: ""
+    path: /
+    # Set to true in production behind HTTPS. Required if sameSite is None,
+    # which browsers ignore on a non-Secure cookie. env=production FORCES this
+    # to true regardless of what is written here — so a純 HTTP 部署必須用 env:
+    # release（見檔頭 env 說明），否則所有 auth/CSRF cookie 會被瀏覽器丟棄。
+    secure: false
+    # Lax | None | Strict. Lax works while the frontend and API share a host;
+    # a cross-site frontend needs None together with secure: true.
+    # Anything unrecognised falls back to Lax.
+    sameSite: Lax
+database:
+  mysql:
+    host: backend-mysql
+    port: 3306
+    username: root
+    password: root
+    dbname: judge_db
+    maxOpenConns: 20
+    maxIdleConns: 5
+    # 連線最長重用時間(分鐘)。MySQL 的 wait_timeout(常見 8 小時)會在伺服器端
+    # 關閉閒置連線;沒有上限時,閒置一段時間後(例如比賽前一晚)連線池可能發出
+    # 已死的連線,偶發 "invalid connection"。不填 = 預設 5;填 0 或負數 = 不設限。
+    connMaxLifetimeMinutes: 5
+  redis:
+    host: redis
+    port: 6379
+    password: ""  
+    db: 0
+  mongo:
+    host: mongo
+    port: 27017
+    username: root
+    password: example
+judge:
+  # 背景修復掃描的間隔(秒)。不填 = 預設 300;填 0 或負數 = 停用定期掃描
+  # (開機那一次照跑)。⚠ 舊版把 0 當「回預設」,現在 0 是明確的停用開關。
+  # orphanSubmission:補上「有 submission 沒 judgment」的 ERROR 判定
+  # orphanJudgment:把「卡在 Judging 但沒有 worker 在跑」的判定收成 ERROR
+  #   (伺服器重啟/worker 崩潰後,比賽中不用等重啟就能自癒;僅單一 API 實例安全)
+  # rejudgeCommitRepair:重放「核准已寫入但判定翻轉中斷」的 rejudge commit
+  orphanSubmissionRepairInterval: 300
+  orphanJudgmentRepairInterval: 300
+  rejudgeCommitRepairInterval: 300
+  containerLabel: "judge-managed=true"
+  testcaseTimeoutSeconds: 60
+  lifecycleTimeoutSeconds: 120
+  healthcheckTimeoutSeconds: 300
+  maxJudgeDurationMinutes: 30
+  workerCount: 8
+  provisionMaxAttempts: 3
+  # 同一位選手兩次提交之間的最短間隔（秒），逐競賽專案可覆寫。0 = 不限制。
+  # 這既是負載控制也是比賽規則：沒有間隔時，評測會變成暴力試錯的工具，
+  # 而每一次嘗試都要起兩個容器。範例預設 5 秒；若比賽規則允許可調整或設 0。
+  # 注意：評測佇列目前無上限，公開部署前應搭配合理的冷卻時間避免資源耗盡。
+  submissionCooldownSeconds: 5
+  # 評測容器的資源上限，逐競賽專案可覆寫（未設定則沿用這裡）。
+  #
+  # 兩個鍵同一套規則，和後台欄位、API 完全一致：
+  #   整行註解掉／不寫  沿用內建預設（pidsLimit 1024、memoryLimitMB 不限制）
+  #   0                不限制
+  #   > 0              該數值
+  #
+  # pidsLimit 是行程數上限。maxJudgeDurationMinutes 無法取代它：fork bomb
+  # 會在幾秒內把主機的行程表塞滿，遠早於逾時計時器生效，而那時 daemon
+  # 已經忙到無法回應「把容器收掉」這個請求。
+  #
+  # 注意這個數字算的是 task（含執行緒），不只是行程：chromium 是少數幾個
+  # 行程但數百條執行緒，sonar-scanner 的 JVM 一個行程就有數十條。1024 仍有
+  # 餘裕，而 fork bomb 幾毫秒就會衝破。
+  # 要調高的話上限是 workerCount x 2 個容器 x 這個值，別讓它逼近主機的
+  # threads-max（預設 8 個 worker 時，1024 最多約 16k tasks）。
+  pidsLimit: 1024
+  # memoryLimitMB 預設不限制，要開請自己評估。它的用途是「歸屬」而不是省
+  # 資源：沒有它，失控的配置由核心在全主機挑 OOM 對象，可能殺掉另一場評測、
+  # MySQL 或後端；有它，殺的是闖禍的那個容器。之所以不預設開啟，是因為它有
+  # 真實的誤判 —— sonar-scanner 的 JVM 或 chromium 用掉 1～2 GB 都算正常。
+  memoryLimitMB: 0
+  # maxOutputBytesPerExec：單一指令 stdout+stderr 合計的擷取上限（bytes）。
+  # 超過就截斷並附標記，避免選手無上限輸出撐爆 worker 記憶體或評測文件。
+  # 不寫＝預設 10 MiB（10485760）；<=0＝不限（不建議）。
+  maxOutputBytesPerExec: 10485760
+  # cpuLimit：每個評測容器的 CPU 上限（整數顆），與 memoryLimitMB 同規則
+  # （不寫／<=0 = 不限）。預設不限，因為合理值取決於一台主機上有多少 worker
+  # 共用 CPU；要開請自行評估（例如 2 表示每個容器最多 2 顆 CPU）。
+  cpuLimit: 0
+  # isolateProjectNetwork：是否切斷「選手（project）容器」的對外網路。
+  # true（預設）＝ 選手容器不接 default bridge、只接一個 internal 的 worker
+  # 網路，因此選手程式無法連外網、host gateway 或網路上其他服務；測試／評分
+  # （test）容器仍保有正常 bridge，可連 Sonar host 等外部服務。
+  # 只有在「選手容器執行期間真的需要連網」的部署才設 false（例如評測流程
+  # 依賴在選手容器內做 run-time 套件安裝——建議改成在 image build 期或測試
+  # 容器內處理）。
+  isolateProjectNetwork: true
+docker:
+  # local  = 使用本機的 /var/run/docker.sock(單機安裝、CI 都走這個)
+  # remote = 連到另一台機器上的 docker daemon,需要填下面的 host/port
+  mode: "local"
+  protocol: "tcp"
+  # 僅 mode: "remote" 時需要:judge 專用 docker host 的位址(例如 "192.0.2.10")
+  host: ""
+  port: 2376
+  # 僅 mode: "remote" 時必填:與遠端 docker daemon 的雙向 TLS 憑證路徑。
+  # docker API 等同 root,遠端 TCP 預設沒有 mTLS 就拒絕啟動(fail closed)。
+  tlsCACert: ""
+  tlsCert: ""
+  tlsKey: ""
+  # 逃生開關:設 true 才允許「無 TLS 憑證的純 TCP 遠端連線」。預設 false。
+  # 只在遠端 daemon 僅暴露於可信、隔離的內網(例如 lab 的 192.168 網段)時才開;
+  # 任何不可信主機碰得到那個 port,等於把 judge host 的 root 交出去。開了會在
+  # 開機印一行 WARNING。填了上面三個 tls* 憑證時,這個開關會被忽略(照樣走 mTLS)。
+  allowInsecureRemote: false
+  # judge 所用 docker host 的 default bridge (docker0) gateway IP。
+  # 核心程式碼**不會自動使用**這個值——它的用途是給出題方在評分環境的
+  # TestEnv 手動引用（例如 SONAR_HOST_URL=http://<這個IP>:<port>），
+  # 讓評分容器存取該機器上 publish 的服務。每台機器可能不同,
+  # 用 make detect:docker-gateway 查詢並自動填入（會連 judge 實際使用的 daemon）。
+  hostGatewayIP: ""
+sonar:
+  # 與 hostGatewayIP 同一類：核心程式碼**不會自動使用**這一節——它是給
+  # 需要 Sonar 評分的場地集中記錄連線資訊用的,實際由出題方寫進評分環境的
+  # TestEnv（SONAR_HOST_URL / SONAR_TOKEN）。不需要 Sonar 的部署可整節留空。
+  # SonarQube 在 judge docker host 上 publish 的 port（建議綁在 hostGatewayIP 上，
+  # 見 docker-compose.sonar.yml 的 ports 設定）
+  port: 9000
+  # SonarQube user token（squ_ 開頭）；不要進 git。
+  token: ""
+test:
+  server:
+    port: 8081
+    storagePath: ./tmp/storage
+log:
+  level: info

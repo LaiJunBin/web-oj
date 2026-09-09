@@ -1,0 +1,73 @@
+{
+  "name": "priority_order_validation",
+  "experiment_type": "priority_order_validation",
+  "contest_name": "Queue Benchmark Contest",
+  "contest_project_name": "Queue Benchmark Short Task",
+  "steps": [
+    {
+      "name": "initial_wave",
+      "type": "submit_batch",
+      "schedule": "sequential",
+      "interval_sec": 0.4,
+      "usernames": [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A05",
+        "A06",
+        "A07",
+        "A08",
+        "A09",
+        "A10"
+      ]
+    },
+    {
+      "name": "repeat_heavy_users",
+      "type": "submit_batch",
+      "schedule": "sequential",
+      "interval_sec": 0.4,
+      "usernames": [
+        "A01",
+        "A02",
+        "A01",
+        "A02"
+      ]
+    },
+    {
+      "name": "wait_for_a01_third_judging",
+      "type": "wait_until",
+      "username": "A01",
+      "sequence_for_user": 3,
+      "timeout_sec": 300,
+      "poll_interval_sec": 1,
+      "judging_started": true
+    },
+    {
+      "name": "submit_a10_again",
+      "type": "submit_batch",
+      "schedule": "sequential",
+      "interval_sec": 0.0,
+      "usernames": [
+        "A10"
+      ]
+    }
+  ],
+  "expected_judging_order": [
+    "A01#1",
+    "A02#1",
+    "A03#1",
+    "A04#1",
+    "A05#1",
+    "A06#1",
+    "A07#1",
+    "A08#1",
+    "A09#1",
+    "A10#1",
+    "A01#2",
+    "A02#2",
+    "A01#3",
+    "A10#2",
+    "A02#3"
+  ]
+}

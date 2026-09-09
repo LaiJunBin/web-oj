@@ -1,0 +1,74 @@
+name: Spec Check
+
+# Guards the API-first contract: typespec/ is the single source of truth, and
+# both committed openapi.yaml snapshots (backend/api/ and frontend/src/api/)
+# must be byte-identical to what `npm run build` in typespec/ produces. A drift
+# means someone edited a snapshot by hand or forgot to copy the build output.
+#
+# Generated CODE needs no drift check, because neither side tracks any:
+# backend api/api.gen.go is produced by `make api` (generator version-pinned
+# inside the target) at image build, container start and in CI; frontend
+# src/api/gen/ is regenerated in frontend-ci. src/mocks/handlers.js is a
+# dev-only msw mock, deliberately not guarded.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "typespec/**"
+      - "backend/api/openapi.yaml"
+      - "frontend/src/api/openapi.yaml"
+      - ".github/workflows/spec-check.yml"
+  pull_request:
+    paths:
+      - "typespec/**"
+      - "backend/api/openapi.yaml"
+      - "frontend/src/api/openapi.yaml"
+      - ".github/workflows/spec-check.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: typespec
+
+jobs:
+  sync:
+    name: Verify committed openapi.yaml matches TypeSpec output
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # typespec/ uses npm (package-lock.json), unlike frontend/ (pnpm).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: typespec/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Regenerates main.tsp from src/ and compiles to
+      # tsp-output/@typespec/openapi3/openapi.yaml.
+      - name: Build spec
+        run: npm run build
+
+      - name: Diff backend snapshot
+        run: |
+          diff -u ../backend/api/openapi.yaml tsp-output/@typespec/openapi3/openapi.yaml || {
+            echo "::error::backend/api/openapi.yaml is out of sync with typespec/. Rebuild with 'npm run build' in typespec/ and copy the output (see typespec/README.md)."
+            exit 1
+          }
+
+      - name: Diff frontend snapshot
+        run: |
+          diff -u ../frontend/src/api/openapi.yaml tsp-output/@typespec/openapi3/openapi.yaml || {
+            echo "::error::frontend/src/api/openapi.yaml is out of sync with typespec/. Rebuild with 'npm run build' in typespec/ and copy the output (see typespec/README.md)."
+            exit 1
+          }
+

@@ -1,0 +1,84 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "!frontend/**/*.md"
+      - ".github/workflows/frontend-ci.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "!frontend/**/*.md"
+      - ".github/workflows/frontend-ci.yml"
+  workflow_dispatch:
+
+# A superseded run for the same ref has no value once a newer commit exists.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: CI only needs to read the repo.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  check:
+    name: Type check, unit tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # The api client reads VITE_API_URL at import time (src/api/index.ts), so
+    # the unit tests need it too, not only the build — job-level, or the test
+    # step throws "missing base url" on a fresh checkout that has no .env.
+    # Only VITE_-prefixed variables are inlined at build time; the values just
+    # need to be well-formed (deployments provide their own .env).
+    env:
+      VITE_API_URL: http://localhost:8080/api/v1
+      VITE_BACKEND_API_URL: http://localhost:8080/api/v1
+
+    steps:
+      # The generated API client comes from the openapi-zod-client submodule
+      # (a customized fork, CLI pre-bundled and committed), so the checkout
+      # must include submodules.
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # The pnpm version comes from package.json's packageManager field.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Baseline is zero known vulnerabilities (see pnpm-workspace.yaml for
+      # temporary overrides); fail on anything so regressions surface here.
+      - name: Audit
+        run: pnpm audit
+
+      # src/api/gen/ is gitignored — a fresh checkout cannot type-check until
+      # the typed client is regenerated from the committed openapi.yaml.
+      - name: Generate API client
+        run: pnpm gen:api-client
+
+      - name: svelte-check
+        run: pnpm run check
+
+      - name: Unit tests
+        run: pnpm test:unit -- --run
+
+      - name: Build
+        run: pnpm build

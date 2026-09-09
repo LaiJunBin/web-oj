@@ -1,0 +1,21 @@
+# Dev/test substrate ONLY — the production frontend is served via adapter-node
+# (see README.md's deployment section), never this compose.
+#
+# network_mode: host, deliberately: the container's localhost IS the machine's,
+# so the .env defaults reach a backend on localhost:8080 from BOTH server-side
+# fetch paths (the SSE proxy and SSR's user fetch), with no cross-compose
+# network to create in the right order. Trade-offs accepted for a dev tool on
+# a trusted host: Vite binds the machine's 5173 directly (port clashes happen
+# at the host level), and the container shares the host's network namespace.
+# Assumes Linux/WSL2 Docker.
+services:
+  web:
+    container_name: frontend
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    volumes:
+      - ..:/app
+    working_dir: /app/frontend
+    restart: unless-stopped

@@ -1,0 +1,240 @@
+name: E2E (with judge)
+
+# Full-stack end-to-end: real backend (sqlite mode, auto migrate + seed on
+# boot) + mongo/redis service containers + the actual judge pipeline opening
+# evaluation containers on the runner's Docker daemon, driven by Playwright
+# against a production build of the frontend (self-host mode on :4173).
+# Covers both the smoke tier and the full tier (judged flow, rejudge,
+# clarification, score export).
+on:
+  pull_request:
+    branches: [main]
+    # The full stack takes tens of minutes to build and run — spend that only
+    # on changes that can affect it. Without this filter every PR ran it,
+    # including Dependabot's github-actions/docker bumps.
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "typespec/**"
+      - "resources/**"
+      - "!frontend/**/*.md"
+      - "!backend/**/*.md"
+      - ".github/workflows/e2e.yml"
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The cron fires every night, but the stack only earns its 20 minutes when
+  # something actually changed: this gate compares HEAD against the last
+  # SUCCESSFUL scheduled run and skips the heavy job otherwise. Filtering on
+  # success is deliberate — a red nightly retries the same commit the next
+  # night until it passes, then goes quiet. PRs and manual dispatches always
+  # run. (GitHub also auto-disables cron workflows after 60 days without repo
+  # activity, so a dormant repo eventually costs nothing at all.)
+  gate:
+    name: Run only when something changed since the last green nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Compare HEAD with the last successful scheduled run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          last=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/e2e.yml/runs?event=schedule&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha' 2>/dev/null || true)
+          if [ -n "$last" ] && [ "$last" = "$GITHUB_SHA" ]; then
+            echo "HEAD $GITHUB_SHA already passed the nightly — skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The backend's godog feature suite lives here rather than in backend-ci:
+  # it is the heavyweight tier (testcontainers infra, tens of minutes), and
+  # this workflow's gate already gives it the right cadence — PRs by path,
+  # nightly only after a change, never for dependabot.
+  backend-features:
+    name: Backend BDD feature suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: gate
+    if: github.actor != 'dependabot[bot]' && needs.gate.outputs.run == 'true'
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # api/api.gen.go is untracked; the generator is version-pinned inside
+      # the make target, so this needs nothing but Go.
+      - name: Generate API server code
+        run: make api
+
+      # The feature runner boots its testcontainers infra from a real
+      # config.yaml (and serialises config_test.yaml for the suites itself),
+      # exactly like a developer machine. Keys must be non-empty to pass
+      # config validation, so generate them into the fresh copy.
+      - name: Provide config.yaml for the feature runner
+        run: |
+          cp config.example.yaml config.yaml
+          make generate:keys
+
+      - name: Feature suite (godog + testcontainers)
+        run: make test:feature
+
+      - name: Short-TTL renewal suite
+        run: make test:feature:short-ttl
+
+  e2e:
+    name: Smoke + full tiers against a self-hosted stack
+    needs: gate
+    # Dependabot PRs still run the cheap per-area CI, but not this stack: its
+    # path filter cannot help (dependency bumps genuinely touch backend/,
+    # frontend/, typespec/ and this file), and the nightly cron re-runs the
+    # full pipeline on merged main, so a broken bump surfaces within a day.
+    if: github.actor != 'dependabot[bot]' && needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    # The backend runs on the host (go run), so both stores must publish
+    # their ports; credentials mirror backend/docker-compose.yml.
+    services:
+      mongo:
+        image: mongo:4.4.18
+        ports:
+          - 27017:27017
+        env:
+          MONGO_INITDB_ROOT_USERNAME: root
+          MONGO_INITDB_ROOT_PASSWORD: example
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # ---- judge prerequisite -------------------------------------------
+      # The seed registers the test-nginx:latest image but cannot build it;
+      # the judge opens containers directly by image tag, so it must exist
+      # on the daemon before the first submission is judged.
+      - name: Build demo judge image
+        run: docker build -t test-nginx:latest resources/demo/test-nginx-image/
+
+      # ---- backend -------------------------------------------------------
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # sed anchors on lines unique in config.example.yaml; the verify step
+      # fails loudly if the example ever drifts and an anchor stops matching.
+      - name: Configure backend (sqlite, local docker, preview origin)
+        working-directory: backend
+        run: |
+          cp config.example.yaml config.yaml
+          make generate:keys
+          make api
+          sed -i \
+            -e 's|^    host: redis$|    host: localhost|' \
+            -e 's|^    host: mongo$|    host: localhost|' \
+            -e 's|^    - http://localhost:5173$|    - http://localhost:4173|' \
+            config.yaml
+          # docker.mode is already "local" in the example; assert it rather than
+          # rewrite it, so a change of that default fails here instead of
+          # silently pointing the judge at another machine.
+          grep -q 'mode: "local"' config.yaml
+          grep -q 'http://localhost:4173' config.yaml
+          ! grep -q 'host: redis' config.yaml
+          ! grep -q 'host: mongo' config.yaml
+
+      # sqlite is in-memory and migrates + seeds itself on boot, so starting
+      # the server is the whole setup. First run compiles, hence the long
+      # readiness window.
+      - name: Start backend
+        working-directory: backend
+        run: |
+          nohup go run cmd/main.go > /tmp/backend.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/api/v1/csrf-token > /dev/null; then
+              echo "backend is up"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::backend did not become ready"
+          tail -50 /tmp/backend.log
+          exit 1
+
+      # ---- frontend ------------------------------------------------------
+      # The pnpm version comes from package.json's packageManager field; the
+      # openapi-zod-client CLI is pre-bundled in the submodule, no extra
+      # install needed.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate API client
+        working-directory: frontend
+        run: pnpm gen:api-client
+
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      # CI is set and E2E_BASE_URL is not → playwright.config.ts self-host
+      # mode builds the frontend and serves it on :4173. The VITE_ vars are
+      # consumed by that in-webServer build; E2E creds default to the seeded
+      # admin/1234 and demo01/1234.
+      - name: Run E2E (smoke + full)
+        working-directory: frontend
+        run: pnpm test:e2e --project=smoke --project=full
+        env:
+          E2E_API_URL: http://localhost:8080/api/v1
+          VITE_API_URL: http://localhost:8080/api/v1
+          VITE_BACKEND_API_URL: http://localhost:8080/api/v1
+
+      - name: Upload backend log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-log
+          path: /tmp/backend.log
+          if-no-files-found: ignore
+
+      - name: Upload Playwright results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: frontend/test-results/
+          if-no-files-found: ignore

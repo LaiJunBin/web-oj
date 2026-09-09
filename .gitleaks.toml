@@ -1,0 +1,18 @@
+# gitleaks configuration for the backend/frontend CI secret scan.
+# Extends the default ruleset and allowlists the few known non-secrets that
+# would otherwise trip a full-history scan.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and a non-secret timing decoy — not real credentials"
+paths = [
+  # Config test fixtures ship deliberately fake keys (test-app-key-secret, …).
+  '''.*/config/config/config_test.*\.yaml''',
+]
+regexes = [
+  # dummyBcryptHash in login_usecase.go is a bcrypt hash of a throwaway string,
+  # compared against only to equalise timing for a non-existent account. It is
+  # not a credential.
+  '''\$2a\$10\$qnSvyOUyMRL4nMQhdQoleuCv9hUzPC\.NPE5OwomRzOPjivXtZGQwe''',
+]

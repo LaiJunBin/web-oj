@@ -1,0 +1,55 @@
+
+server:
+  port: 8080
+  appKey: !<tag:yaml.org,2002:str> "test-app-key-secret"
+  jwtKey: !<tag:yaml.org,2002:str> "test-jwt-key"
+  storeKey: !<tag:yaml.org,2002:str> ""
+  csrfKey: !<tag:yaml.org,2002:str> "test-csrf-key"
+  rdbDriver: sqlite
+  storagePath: ./storage
+auth:
+  accessTokenTTLSeconds: 3600
+  refreshTokenTTLSeconds: 604800
+  cookie:
+    domain: ""
+    path: /
+    secure: false
+    sameSite: Lax
+database:
+  mysql:
+    host: test-mysql-host
+    port: 3306
+    username: root
+    password: 1234
+    dbname: test-db
+    maxOpenConns: 20
+    maxIdleConns: 5
+  redis:
+    host: redis
+    port: 6379
+    password: ""  
+    db: 0
+  mongo:
+    host: mongo
+    port: 27017
+    username: root
+    password: example
+judgehost:
+  port: 8080
+  image: clean-backend-judge
+  network: go-app-network
+  projectVolume: ./judge/:/app/
+  dockerVolume: /var/run/docker.sock:/var/run/docker.sock
+  storageVolume: ./storage/submissions/:/app/storage/submissions/
+  envFile: .env
+  replicas: 3
+  RegisterURL: http://api:8080
+  label: judgehost=true
+docker:
+  mode: "remote"
+  protocol: "tcp"
+  host: "192.0.2.10"
+  port: 2376
+test:
+  server:
+    port: 8081

@@ -1,0 +1,93 @@
+# Cuts a release from the curated CHANGELOG. Manual-only by design: which
+# bump a batch of changes deserves is an editorial decision, so a human types
+# the version; this job only does the mechanical part — move [Unreleased]
+# under a new version heading, commit, tag THAT commit (so the tagged tree
+# always contains its own changelog), and publish a GitHub Release carrying
+# the section. It refuses to cut when [Unreleased] is empty: an empty release
+# almost always means the entries were forgotten, not that there is nothing
+# to say.
+#
+# The release commit touches only CHANGELOG.md, which every CI workflow's
+# path filter excludes — cutting a release never triggers a test run. Note
+# for a future protected main: the github-actions bot must be allowed to
+# push, or this job needs a PAT.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (X.Y.Z, no leading v)"
+        required: true
+
+concurrency: release
+
+permissions:
+  contents: write
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version and changelog
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::version must be X.Y.Z (no leading v)"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::tag v$VERSION already exists"; exit 1
+          fi
+          if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md already has a [$VERSION] section"; exit 1
+          fi
+          # [Unreleased] must carry real content (blank lines don't count).
+          body=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md \
+            | grep -v '^[[:space:]]*$' || true)
+          if [ -z "$body" ]; then
+            echo "::error::[Unreleased] is empty — nothing to release"; exit 1
+          fi
+
+      - name: Move [Unreleased] under the new version heading
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          today=$(date -u +%Y-%m-%d)
+          awk -v ver="$VERSION" -v date="$today" '
+            /^## \[Unreleased\]/ { print; print ""; print "## [" ver "] - " date; next }
+            { print }
+          ' CHANGELOG.md > CHANGELOG.md.new
+          mv CHANGELOG.md.new CHANGELOG.md
+
+      - name: Commit, tag, push
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(release): v$VERSION"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          # One push for both refs: if main moved since checkout this fails
+          # atomically and nothing half-published needs cleaning up.
+          git push origin "HEAD:${GITHUB_REF_NAME}" "v$VERSION"
+
+      - name: Publish the GitHub Release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { f=1; next }
+            /^## \[/ { f=0 }
+            f
+          ' CHANGELOG.md > /tmp/notes.md
+          gh release create "v$VERSION" --title "v$VERSION" --notes-file /tmp/notes.md

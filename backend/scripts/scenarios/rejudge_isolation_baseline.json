@@ -1,0 +1,44 @@
+{
+  "name": "rejudge_isolation_baseline",
+  "experiment_type": "rejudge_isolation_baseline",
+  "contest_name": "Queue Benchmark Contest",
+  "contest_project_name": "Queue Benchmark Short Task",
+  "steps": [
+    {
+      "name": "initial_wave",
+      "type": "submit_batch",
+      "schedule": "sequential",
+      "interval_sec": 0.4,
+      "usernames": [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A05",
+        "A06",
+        "A07",
+        "A08",
+        "A09",
+        "A10"
+      ]
+    },
+    {
+      "name": "wait_until_first_judging",
+      "type": "wait_until",
+      "username": "A01",
+      "sequence_for_user": 1,
+      "timeout_sec": 300,
+      "poll_interval_sec": 1,
+      "judging_started": true
+    },
+    {
+      "name": "late_fresh_submission",
+      "type": "submit_batch",
+      "schedule": "sequential",
+      "interval_sec": 0.0,
+      "usernames": [
+        "A10"
+      ]
+    }
+  ]
+}

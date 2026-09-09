@@ -1,0 +1,181 @@
+{
+  "_readme": [
+    "本檔是系統內建示範資料的唯一文字來源，seeder 只負責把它寫進資料庫。",
+    "想改示範帳號、比賽名稱、題目敘述或評分項，改這裡就好，不必動 Go 程式碼。",
+    "示範密碼刻意統一為 1234 並公開記載於 README —— 這是給第一次安裝的人用的展示資料，",
+    "正式環境請用管理後台自行建立帳號，不要沿用。",
+    "時間一律以「相對於 seed 當下的分鐘數」表示，所以不管什麼時候安裝，示範比賽都是進行中。",
+    "評分項與測資是對著 tests/data/nginx.zip 這份「只做一半」的範例作品設計的：",
+    "設定檔與 Dockerfile 都寫好了但沒放首頁，提交後會拿到 18/25，正好一次示範通過／失敗／部分給分。",
+    "⚠ 寫「檔案存在」型測資時要記得：mountPath 是 anonymous volume，Docker 會用映像在該路徑下的",
+    "內容初始化它，所以選手沒交的檔案有可能是映像自帶的。nginx 映像就自帶 /usr/share/nginx/html/",
+    "index.html（Welcome to nginx!）與 50x.html —— 第 3 項因此必須額外排除預設歡迎頁，否則沒交首頁也會過。",
+    "⚠ 還有：`! grep -q PATTERN 不存在的檔案` 會回 0（grep 找不到檔案回 2，被 ! 反轉成成功），",
+    "所以每個帶 ! grep 的測資都要先 test -f 把檔案存在性擋在前面。",
+    "描述欄位請寫成不含標籤的單一段落 —— 專案描述在選手總覽頁是用 @html 直接輸出（換行會被吃掉、",
+    "HTML 標籤會被解讀），在日程頁與後台列表卻是純文字（標籤會原樣顯示）。細部要求交給評分項描述承載。"
+  ],
+
+  "password": "1234",
+
+  "admin": {
+    "name": "系統管理員",
+    "username": "admin",
+    "roles": ["admin", "contestant", "api_reader"]
+  },
+
+  "contestants": [
+    { "name": "示範選手 01", "username": "demo01", "roles": ["contestant"] },
+    { "name": "示範選手 02", "username": "demo02", "roles": ["contestant"] },
+    { "name": "示範選手 03", "username": "demo03", "roles": ["contestant"] },
+    { "name": "示範選手 04", "username": "demo04", "roles": ["contestant"] },
+    { "name": "示範選手 05", "username": "demo05", "roles": ["contestant"] }
+  ],
+
+  "image": {
+    "tag": "test-nginx:latest",
+    "mountPath": "/usr/share/nginx/html",
+    "description": "示範用 Nginx 執行環境（靜態網站）",
+    "isReady": false
+  },
+
+  "project": {
+    "name": "示範題目：Nginx 靜態網站",
+    "description": "系統內建的示範題目：請用 Nginx 架設一台靜態網站，把 Dockerfile、conf.d/default.conf 與 index.html 打包成 zip 上傳，系統會啟動容器套用你的設定並逐項評分。滿分 25 分，四個評分項逐項獨立計分、答錯不倒扣，詳細要求與測試指令請看下方「評分項目」。想先看看評測長什麼樣子，可以直接上傳專案原始碼裡的 tests/data/nginx.zip —— 那是一份刻意只做一半的範例作品，設定檔寫好了但還沒放首頁，會得到 18/25，一次看完通過、失敗與部分給分三種呈現。",
+    "resultParser": "exitcode",
+
+    "dynamicFields": [
+      {
+        "type": "text",
+        "name": "site_title",
+        "label": "網站標題（選填，只會記錄在提交資料中，不影響評分）",
+        "defaultValue": "我的第一個網站",
+        "isRequired": false
+      }
+    ],
+
+    "lifecycles": [
+      {
+        "name": "列出提交的檔案",
+        "description": "評測開始前先把上傳的檔案列進評測日誌，方便對照哪些檔案有交、哪些沒交。這也是「生命週期指令」這個功能的最小示範。",
+        "type": "before_all",
+        "runsOn": "test",
+        "command": "sh -c \"echo '=== 這次提交的檔案 ===' && ls -R /usr/share/nginx/html\""
+      }
+    ],
+
+    "gradingItems": [
+      {
+        "label": "1",
+        "name": "Nginx 設定檔",
+        "description": "檢查 conf.d/default.conf 的基本設定。本項採扣分制：從 10 分起算，每有一筆測資沒通過就扣掉該筆的配分。",
+        "score": 10,
+        "scoringStrategy": "decrease",
+        "outputFormat": "text",
+        "testcases": [
+          {
+            "name": "設定檔位於 conf.d/default.conf",
+            "command": "sh -c \"test -f /usr/share/nginx/html/conf.d/default.conf\"",
+            "score": 4,
+            "isSample": true
+          },
+          {
+            "name": "伺服器監聽 80 埠",
+            "command": "sh -c \"grep -qE 'listen[[:space:]]+80;' /usr/share/nginx/html/conf.d/default.conf\"",
+            "score": 3,
+            "isSample": true
+          },
+          {
+            "name": "已設定 server_name",
+            "command": "sh -c \"grep -qE '^[[:space:]]*server_name[[:space:]]' /usr/share/nginx/html/conf.d/default.conf\"",
+            "score": 3,
+            "isSample": true
+          }
+        ]
+      },
+      {
+        "label": "2",
+        "name": "容器映像設定",
+        "description": "檢查 Dockerfile 是否以官方 nginx 為基底，並把設定檔複製進映像。本項採加分制：通過一筆測資就拿一筆的分數。",
+        "score": 6,
+        "scoringStrategy": "increase",
+        "outputFormat": "text",
+        "testcases": [
+          {
+            "name": "以官方 nginx 映像為基底",
+            "command": "sh -c \"grep -qE '^FROM[[:space:]]+nginx' /usr/share/nginx/html/Dockerfile\"",
+            "score": 3,
+            "isSample": true
+          },
+          {
+            "name": "將 conf.d 複製進映像",
+            "command": "sh -c \"grep -qE '^COPY .*conf' /usr/share/nginx/html/Dockerfile\"",
+            "score": 3,
+            "isSample": true
+          }
+        ]
+      },
+      {
+        "label": "3",
+        "name": "首頁已部署",
+        "description": "網站根目錄需要放上你自己的 index.html，而且要有網頁標題。注意 nginx 映像本身就附了一頁「Welcome to nginx!」預設歡迎頁，沒有覆蓋掉它不算完成部署 —— 這一項會檢查首頁確實換成你的內容。範例作品刻意沒交首頁，用來示範「這一項 0 分、但其他項照樣拿分」。",
+        "score": 5,
+        "scoringStrategy": "increase",
+        "outputFormat": "text",
+        "testcases": [
+          {
+            "name": "index.html 已放進網站根目錄，且不是 nginx 預設歡迎頁",
+            "command": "sh -c \"test -f /usr/share/nginx/html/index.html && ! grep -qi 'Welcome to nginx' /usr/share/nginx/html/index.html\"",
+            "score": 3,
+            "isSample": true
+          },
+          {
+            "name": "首頁包含自訂的 <title> 網頁標題",
+            "command": "sh -c \"test -f /usr/share/nginx/html/index.html && ! grep -qi 'Welcome to nginx' /usr/share/nginx/html/index.html && grep -qi '<title>' /usr/share/nginx/html/index.html\"",
+            "score": 2,
+            "isSample": true
+          }
+        ]
+      },
+      {
+        "label": "4",
+        "name": "錯誤頁面設定",
+        "description": "站台需要處理錯誤情境。本項含一筆隱藏測資（isSample = false），選手看得到項目名稱與得分，但看不到測資內容。",
+        "score": 4,
+        "scoringStrategy": "increase",
+        "outputFormat": "text",
+        "testcases": [
+          {
+            "name": "已設定 5xx 錯誤頁",
+            "command": "sh -c \"grep -qE '^[[:space:]]*error_page[[:space:]]+50' /usr/share/nginx/html/conf.d/default.conf\"",
+            "score": 2,
+            "isSample": true
+          },
+          {
+            "name": "已設定 404 錯誤頁",
+            "command": "sh -c \"grep -qE '^[[:space:]]*error_page[[:space:]]+404' /usr/share/nginx/html/conf.d/default.conf\"",
+            "score": 2,
+            "isSample": false
+          }
+        ]
+      }
+    ]
+  },
+
+  "contest": {
+    "name": "示範競賽：靜態網頁架設",
+    "description": "安裝完成後自動建立的示範競賽，用來走完一次完整流程：登入 → 看題目 → 上傳作品 → 看評測過程 → 看記分板。示範帳號 demo01 ~ demo05（密碼都是 1234）已經報名，可以用不同帳號登入觀察記分板多人排名的樣子。確認流程沒問題之後，就到管理後台建立你自己的競賽，並把這場示範競賽停用或刪除。",
+    "isPublic": true,
+    "activateAfterMinutes": 0,
+    "deactivateAfterMinutes": 20160,
+    "project": {
+      "name": "第一題：用 Nginx 部署靜態網站",
+      "isPublic": true,
+      "activateAfterMinutes": 0,
+      "deactivateAfterMinutes": 20160,
+      "startAfterMinutes": 0,
+      "endAfterMinutes": 10080,
+      "judgePriorityStrategy": "default"
+    }
+  }
+}

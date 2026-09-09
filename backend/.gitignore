@@ -1,0 +1,22 @@
+tmp
+config.yaml
+/config_test.yaml
+coverage.out
+/internal/mocks
+/internal/app/**/mocks
+storage
+
+# benchmark tmp files and large test fixtures
+scripts/output
+scripts/__pycache__
+scripts/test-projects
+
+# local-only data (event seed data, archived experiment results)
+/local
+
+
+# Generated API server code — every environment runs `make api` (version-pinned)
+/api/api.gen.go
+
+# Compose 變數插值的本機覆寫(見 .env.example)
+.env

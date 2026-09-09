@@ -1,0 +1,16 @@
+{
+  "name": "typespec",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node ./build-utils/watch.js",
+    "build": "node ./build-utils/build.js"
+  },
+  "dependencies": {
+    "@typespec/compiler": "0.56.0",
+    "@typespec/http": "0.56.0",
+    "@typespec/rest": "0.56.0",
+    "@typespec/openapi3": "0.56.0"
+  },
+  "private": true
+}

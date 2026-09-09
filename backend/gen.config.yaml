@@ -1,0 +1,11 @@
+package: api
+output-options:
+  user-templates:
+    strict/strict-gin.tmpl: api/templates/strict-gin.tmpl
+    strict/strict-interface.tmpl: api/templates/strict-interface.tmpl
+generate:
+  models: true
+  gin-server: true
+  strict-server: true
+  embedded-spec: true
+output: api/api.gen.go
