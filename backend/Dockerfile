@@ -1,4 +1,4 @@
-FROM golang:1.23 as go_app_dev
+FROM golang:1.27 as go_app_dev
 
 WORKDIR /app/backend
 COPY go.mod go.sum ./
@@ -36,7 +36,7 @@ CMD air
 # source, and pin every `go install ...@latest` to a tag. Note the gorm sqlite
 # driver is cgo, so a fully static/scratch image needs the sqlite import dropped
 # or swapped for a pure-Go driver first.
-FROM golang:1.23 as go_app_prod
+FROM golang:1.27 as go_app_prod
 
 WORKDIR /app
 COPY . .
